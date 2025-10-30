@@ -1,49 +1,56 @@
-name: "Review and deploy Development environment"
-run-name: ${{ github.actor }} is running a Terraform review and deploy to Dev 🚀
+name: Review and deploy Development environment 🚀
 
 on:
   workflow_dispatch:
+    inputs:
+      aws-region:
+        description: "AWS Region to deploy into"
+        required: true
+        default: "us-east-1"
   push:
     branches:
       - dev
 
-permissions:
-  # id-token write required for OIDC, contents read required for actions/checkout
-  id-token: write
-  contents: read
-
-env:
-  TF_LOG: INFO
-  AWS_REGION: ${{ vars.TF_VAR_REGION }}
-  AWS_BUCKET_NAME: ${{ secrets.TF_STATE_BUCKET_NAME }}
-  AWS_BUCKET_KEY_NAME: ${{ secrets.TF_STATE_BUCKET_KEY }}
-
 jobs:
-  release_to_dev:
-    name: "Deploy Terraform to Dev"
+  deploy:
+    name: Deploy Terraform to Dev
     runs-on: ubuntu-latest
+
+    env:
+      TF_LOG: INFO
+      AWS_REGION: ${{ github.event.inputs.aws-region }}
+      TF_WORKING_DIR: ./terraform/dev
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE }}
-          aws-region: ${{ env.AWS_REGION }}
-
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.9.5
+          terraform_version: 1.8.5
 
-      - name: Terraform Init
-        run: terraform init -backend-config="bucket=${{ env.AWS_BUCKET_NAME }}" -backend-config="key=${{ env.AWS_BUCKET_KEY_NAME }}"
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ github.event.inputs.aws-region }}
 
-      - name: Terraform Plan
-        run: terraform plan
+      - name: Initialize Terraform
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform init -input=false
 
-      - name: Terraform Apply
-        run: terraform apply -auto-approve
+      - name: Validate Terraform
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform validate
+
+      - name: Plan Terraform
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform plan -out=tfplan -input=false
+
+      - name: Apply Terraform (Auto-approve)
+        if: github.ref == 'refs/heads/dev' || github.event_name == 'workflow_dispatch'
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform apply -auto-approve tfplan
 
